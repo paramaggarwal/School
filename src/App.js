@@ -15,6 +15,7 @@ class App extends Component {
     this.calculatePosition = this.calculatePosition.bind(this)
 
     this.state = {
+      isHumanInput: true,
       position: Math.random()
     };
 
@@ -24,25 +25,56 @@ class App extends Component {
   calculatePosition() {
     this.setState((prevState) => {
 
+      let correctionDirection = 0; // -1 for left, +1 for right
+
+      // calculate AI output if not human
+      let guessedDirectionName = '.';
+      let x = new convnetjs.Vol([prevState.position]);
+      let probabilityVolume = this._net.forward(x);
+      let probableClassIndex = this.highestIndex(probabilityVolume.w);
+      if (probableClassIndex === 0) {
+        guessedDirectionName = 'left'
+      } else if (probableClassIndex === 2) {
+        guessedDirectionName = 'right'
+      }
+
+      // decide correction based on who is in control
+      if (!this.state.isHumanInput) {
+        if (probableClassIndex === 0) {
+          correctionDirection = -1;
+        } else if (probableClassIndex === 2) {
+          correctionDirection = 1;
+        }
+      } else {
+        correctionDirection = this._pressedDirection;
+      }
+      
+      // random noise
       let tweak = (Math.random() - 0.5) * INSTABILITY_MULTIPLIER;
       this._instabilityDirection += tweak;
 
-      let correctionDistance = (this._pressedDirection * STEERING_MULTIPLIER);
+      // correction value - either human or AI
+      let correctionDistance = (correctionDirection * STEERING_MULTIPLIER);
 
+      // train AI model if human input
+      if (this.state.isHumanInput) {
+        this._trainer.train(x, (this._pressedDirection + 1) / 2);
+        console.log([prevState.position, (this._pressedDirection + 1)/2])        
+      }
+
+      // calculate new final position for display
       let lastPosition = prevState.position;
       let newPosition = lastPosition + this._instabilityDirection + correctionDistance;
 
+      // add bounds for possible position values
       if ((newPosition < 0) || (newPosition > 1)) {
         this._instabilityDirection = 0;
         newPosition = lastPosition
       }
 
-      var x = new convnetjs.Vol([lastPosition, (this._instabilityDirection * 100) + 1]);
-      console.log([lastPosition, (this._instabilityDirection * 100) + 1])
-      this._trainer.train(x, this._pressedDirection + 1);
-
       return {
-       position: newPosition
+       position: newPosition,
+       guessedDirectionName: guessedDirectionName,
       }
     }, () => {
       requestAnimationFrame(this.calculatePosition)
@@ -71,7 +103,7 @@ class App extends Component {
     var layer_defs = [];
     
     // input layer of size 1x1x2 (all volumes are 3D)
-    layer_defs.push({type:'input', out_sx:1, out_sy:1, out_depth:2});
+    layer_defs.push({type:'input', out_sx:1, out_sy:0, out_depth:2});
     
     // some fully connected layers
     layer_defs.push({type:'fc', num_neurons:20, activation:'relu'});
@@ -105,19 +137,6 @@ class App extends Component {
   }
 
   render() {
-     
-    var x = new convnetjs.Vol([this.state.position, this._instabilityDirection + 1]);
-    // console.log(this.state.position, this._instabilityDirection + 1)
-
-    var probabilityVolume = this._net.forward(x);
-    let probableClass = this.highestIndex(probabilityVolume.w);
-    let probableDirection = '.';
-    if (probableClass === 0) {
-      probableDirection = 'left'
-    } else if (probableClass === 2) {
-      probableDirection = 'right'
-    }
-
     return (
       <div className="App">
         <div className="App-header">
@@ -127,7 +146,7 @@ class App extends Component {
         <p className="App-intro">
           To get started, try keeping the dot in the center with your arrow keys.
         </p>
-        <p>{probableDirection}</p>
+        <p>{this.state.guessedDirectionName}</p>
         <div
           style={{
             margin: 'auto',
